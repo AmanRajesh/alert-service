@@ -99,30 +99,16 @@ public class AlertService {
     private Mono<List<ScannedVehicle>> fetchVehiclesFromSet(String key) {
         return redisTemplate.opsForZSet().range(key, Range.unbounded())
                 .flatMap(memberObj -> {
-                    String memberString = String.valueOf(memberObj); // e.g., "Car:session_123"
+                    String memberString = String.valueOf(memberObj);
+                    return redisTemplate.opsForGeo().position(key, memberString)
+                            .map(pointObj -> {
+                                Point point = (Point) pointObj;
+                                String[] parts = memberString.replace("\"", "").trim().split(":");
 
-                    String[] parts = memberString.replace("\"", "").trim().split(":");
-                    String type = parts.length > 0 ? parts[0] : "unknown";
-                    String sessionId = parts.length > 1 ? parts[1] : "unknown";
+                                String type = parts.length > 0 ? parts[0] : "unknown";
+                                String sessionId = parts.length > 1 ? parts[1] : "unknown";
+                                double speed = parts.length > 2 ? Double.parseDouble(parts[2]) : 0.0;
 
-                    // 1. Get the coordinates
-                    Mono<Point> positionMono = redisTemplate.opsForGeo().position(key, memberString)
-                            .map(p -> (Point) p);
-
-                    // 2. Get the speed from our new telemetry cache (format: "speed:bearing")
-                    Mono<Double> speedMono = redisTemplate.opsForValue().get("telemetry:" + sessionId)
-                            .map(telemetryObj -> {
-                                String telStr = String.valueOf(telemetryObj).replace("\"", "").trim();
-                                String[] telParts = telStr.split(":");
-                                return telParts.length > 0 ? Double.parseDouble(telParts[0]) : 0.0;
-                            })
-                            .defaultIfEmpty(0.0); // Default to stationary if no speed found
-
-                    // 3. Combine them together!
-                    return Mono.zip(positionMono, speedMono)
-                            .map(tuple -> {
-                                Point point = tuple.getT1();
-                                Double speed = tuple.getT2();
                                 return new ScannedVehicle(sessionId, type, point.getY(), point.getX(), speed);
                             });
                 })
